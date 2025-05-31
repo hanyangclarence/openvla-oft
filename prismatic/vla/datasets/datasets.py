@@ -38,6 +38,7 @@ class RLDSBatchTransform:
         dataset_name, current_action = rlds_batch["dataset_name"], rlds_batch["action"][0]
         img = Image.fromarray(rlds_batch["observation"]["image_primary"][0])
         lang = rlds_batch["task"]["language_instruction"].decode().lower()
+        reason_lang = rlds_batch["task"]["language_reason"].decode()
         actions = rlds_batch["action"]
 
         # Construct Chat-based Prompt =>> Input is default query + language instruction, output are the action tokens
@@ -50,11 +51,12 @@ class RLDSBatchTransform:
         # Get action chunk string
         current_action_string = self.action_tokenizer(current_action)
         action_chunk_string = current_action_string + future_actions_string
-        action_chunk_len = len(action_chunk_string)
+        
+        full_response = f"{reason_lang}\n\nACTION:\n{action_chunk_string}"
 
         conversation = [
             {"from": "human", "value": f"What action should the robot take to {lang}?"},
-            {"from": "gpt", "value": action_chunk_string},
+            {"from": "gpt", "value": full_response},
         ]
         for turn in conversation:
             prompt_builder.add_turn(turn["from"], turn["value"])
@@ -69,7 +71,12 @@ class RLDSBatchTransform:
         pixel_values = self.image_transform(img)
 
         # [CRITICAL] We do not want to take the loss for anything but the predicted action tokens!
-        labels[: -(action_chunk_len + 1)] = IGNORE_INDEX
+        full_response_tokens = self.base_tokenizer(full_response, add_special_tokens=True).input_ids
+        num_answer_tokens = len(full_response_tokens)
+        if full_response_tokens[0] == self.base_tokenizer.bos_token_id:
+            num_answer_tokens -= 1  # Remove BOS token if present
+
+        labels[: -(num_answer_tokens + 1)] = IGNORE_INDEX  # 1 is for the EOS token
         if not self.predict_stop_token:
             labels[-1] = IGNORE_INDEX
 
@@ -115,8 +122,10 @@ class RLDSDataset(IterableDataset):
         # fmt: off
         if "aloha" in self.data_mix:
             load_camera_views = ("primary", "left_wrist", "right_wrist")
-        else:
+        elif "embodiedo1" in self.data_mix:
             load_camera_views = ("primary", "wrist")
+        else:
+            assert False, f"Unknown dataset mix {self.data_mix} -- please specify a valid mix name!"
 
         per_dataset_kwargs, weights = get_oxe_dataset_kwargs_and_weights(
             self.data_root_dir,

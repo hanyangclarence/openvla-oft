@@ -127,6 +127,9 @@ def make_dataset_from_rlds(
     REQUIRED_KEYS = {"observation", "action"}
     if language_key is not None:
         REQUIRED_KEYS.add(language_key)
+    
+    # add key for language reasoning
+    REQUIRED_KEYS.add("language_reason")
 
     def restructure(traj):
         # apply a standardization function, if provided
@@ -178,6 +181,13 @@ def make_dataset_from_rlds(
                     f"Language key {language_key} has dtype {traj[language_key].dtype}, " "but it must be tf.string."
                 )
             task["language_instruction"] = traj.pop(language_key)
+        
+        language_reason_key = "language_reason"
+        if traj[language_reason_key].dtype != tf.string:
+            raise ValueError(
+                f"Language key {language_reason_key} has dtype {traj[language_reason_key].dtype}, " "but it must be tf.string."
+            )
+        task["language_reason"] = traj.pop(language_reason_key)
 
         traj = {
             "observation": new_obs,
@@ -199,7 +209,7 @@ def make_dataset_from_rlds(
 
         return traj
 
-    builder = tfds.builder(name, data_dir=data_dir)
+    builder = tfds.builder_from_directory(data_dir)    
 
     # load or compute dataset statistics
     if isinstance(dataset_statistics, str):

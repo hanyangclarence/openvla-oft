@@ -18,6 +18,7 @@ Transforms adopt the following structure:
 from typing import Any, Dict
 
 import tensorflow as tf
+import tensorflow_graphics.geometry.transformation as tfgt
 
 from prismatic.vla.datasets.rlds.oxe.utils.droid_utils import droid_baseact_transform, droid_finetuning_transform
 from prismatic.vla.datasets.rlds.utils.data_utils import (
@@ -846,6 +847,29 @@ def aloha_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     return trajectory
 
 
+def rlbencho1_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
+    eef_position_proprio, eef_orientation_proprio, gripper_proprio = tf.split(trajectory["observation"]["state"], [3,4,1], axis=1)  # (T,3) (T,4) (T,1)
+    eef_position_control, eef_orientation_control, gripper_control = tf.split(trajectory["action"], [3,4,1], axis=1) # (T,3) (T,4) (T,1)
+
+    action_gripper = invert_gripper_actions(gripper_control) # +1 = open, 0 = close
+
+    action_delta_xyz = eef_position_control - eef_position_proprio # (T, 3)
+    
+    # quaternions in rlbench and tfgraphics are all in format xyzw, so we don't need further conversion
+    delta_eef_orientation_proprio = tfgt.quaternion.multiply(
+        eef_orientation_control, tfgt.quaternion.inverse(eef_orientation_proprio)
+    )
+    delta_eef_orientation_proprio = tfgt.quaternion.normalize(delta_eef_orientation_proprio)
+    action_delta_rpy = tfgt.euler.from_quaternion(delta_eef_orientation_proprio)
+    
+    # resolve NaN values in action_delta_rpy
+    action_delta_rpy = tf.where(tf.math.is_nan(action_delta_rpy), tf.zeros_like(action_delta_rpy), action_delta_rpy)
+
+    trajectory["action"] = tf.concat([action_delta_xyz, action_delta_rpy, action_gripper], axis=-1) # (T, [3,3,1]) caution: last action is meaningless!
+            
+    return trajectory
+
+
 # === Registry ===
 OXE_STANDARDIZATION_TRANSFORMS = {
     "bridge_oxe": bridge_oxe_dataset_transform,
@@ -930,4 +954,6 @@ OXE_STANDARDIZATION_TRANSFORMS = {
     "aloha1_fold_shirt_30_demos": aloha_dataset_transform,
     "aloha1_scoop_X_into_bowl_45_demos": aloha_dataset_transform,
     "aloha1_put_X_into_pot_300_demos": aloha_dataset_transform,
+    ### RLBench datasets
+    "rlbencho1": rlbencho1_dataset_transform,
 }
