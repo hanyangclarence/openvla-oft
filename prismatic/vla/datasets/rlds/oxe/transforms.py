@@ -851,7 +851,8 @@ def rlbencho1_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     eef_position_proprio, eef_orientation_proprio, gripper_proprio = tf.split(trajectory["observation"]["state"], [3,4,1], axis=1)  # (T,3) (T,4) (T,1)
     eef_position_control, eef_orientation_control, gripper_control = tf.split(trajectory["action"], [3,4,1], axis=1) # (T,3) (T,4) (T,1)
 
-    action_gripper = invert_gripper_actions(gripper_control) # +1 = open, 0 = close
+    gripper_proprio = invert_gripper_actions(gripper_proprio)  # +1 = open, 0 = close
+    action_gripper = invert_gripper_actions(gripper_control)
 
     action_delta_xyz = eef_position_control - eef_position_proprio # (T, 3)
     
@@ -866,6 +867,7 @@ def rlbencho1_dataset_transform(trajectory: Dict[str, Any]) -> Dict[str, Any]:
     action_delta_rpy = tf.where(tf.math.is_nan(action_delta_rpy), tf.zeros_like(action_delta_rpy), action_delta_rpy)
 
     trajectory["action"] = tf.concat([action_delta_xyz, action_delta_rpy, action_gripper], axis=-1) # (T, [3,3,1]) caution: last action is meaningless!
+    trajectory["observation"]["state"] = tf.concat([eef_position_proprio, eef_orientation_proprio, gripper_proprio], axis=-1)  # (T, [3,4,1])
             
     return trajectory
 
