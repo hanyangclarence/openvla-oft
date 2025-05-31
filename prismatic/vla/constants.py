@@ -54,18 +54,19 @@ BRIDGE_CONSTANTS = {
 
 # Function to detect robot platform from command line arguments
 def detect_robot_platform():
-    cmd_args = " ".join(sys.argv).lower()
+    # cmd_args = " ".join(sys.argv).lower()
 
-    if "libero" in cmd_args:
-        return "LIBERO"
-    elif "aloha" in cmd_args:
-        return "ALOHA"
-    elif "bridge" in cmd_args:
-        return "BRIDGE"
-    elif "rlbencho1" in cmd_args:
-        return "RLBENCH"
-    else:
-        assert False, f"Unknown robot platform in {cmd_args}"
+    # if "libero" in cmd_args:
+    #     return "LIBERO"
+    # elif "aloha" in cmd_args:
+    #     return "ALOHA"
+    # elif "bridge" in cmd_args:
+    #     return "BRIDGE"
+    # elif "rlbencho1" in cmd_args:
+    #     return "RLBENCH"
+    # else:
+    #     assert False, f"Unknown robot platform in {cmd_args}"
+    return "RLBENCH"
 
 
 # Determine which robot platform to use
