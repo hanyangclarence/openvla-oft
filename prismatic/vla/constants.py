@@ -65,7 +65,7 @@ def detect_robot_platform():
     elif "rlbencho1" in cmd_args:
         return "RLBENCH"
     else:
-        assert False, "Unknown robot platform. Please specify the correct platform in the command line arguments."
+        assert False, f"Unknown robot platform in {cmd_args}"
 
 
 # Determine which robot platform to use
