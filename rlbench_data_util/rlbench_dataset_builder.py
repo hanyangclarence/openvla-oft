@@ -40,6 +40,12 @@ class RLBenchO1Dataset(tfds.core.GeneratorBasedBuilder):
                             encoding_format='png',
                             doc='Wrist camera RGB observation.',
                         ),
+                        'wrist_image': tfds.features.Image(
+                            shape=(512, 512, 3),
+                            dtype=np.uint8,
+                            encoding_format='png',
+                            doc='Wrist camera RGB observation.',
+                        ),
                         'state': tfds.features.Tensor(
                             shape=(8,),
                             dtype=np.float32,
