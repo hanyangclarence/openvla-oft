@@ -122,7 +122,7 @@ class RLDSDataset(IterableDataset):
         # fmt: off
         if "aloha" in self.data_mix:
             load_camera_views = ("primary", "left_wrist", "right_wrist")
-        elif "embodiedo1" in self.data_mix:
+        elif "rlbencho1" in self.data_mix:
             load_camera_views = ("primary", "wrist")
         else:
             assert False, f"Unknown dataset mix {self.data_mix} -- please specify a valid mix name!"
