@@ -627,8 +627,8 @@ def finetune(cfg: FinetuneConfig) -> None:
             to_bf16=True,
         )
 
-    # If applicable, instantiate diffusion action head and noisy action projector
-    if cfg.use_diffusion:
+    # Instantiate diffusion action head and noisy action projector
+    elif cfg.use_diffusion:
         action_head = init_module(
             DiffusionActionHead,
             "action_head",
@@ -645,6 +645,9 @@ def finetune(cfg: FinetuneConfig) -> None:
         noisy_action_projector = init_module(
             NoisyActionProjector, "noisy_action_projector", cfg, device_id, {"llm_dim": vla.module.llm_dim}
         )
+    
+    else:
+        action_head = None
 
     # Get number of vision patches
     NUM_PATCHES = vla.module.vision_backbone.get_num_patches() * vla.module.vision_backbone.get_num_images_in_input()
