@@ -435,6 +435,13 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
         # all_actions_mask = current_action_mask | next_actions_mask  # (B, seq_len)
         all_actions_mask = labels > ACTION_TOKEN_BEGIN_IDX
         return all_actions_mask
+    
+    def _get_prompt_masks(self, labels):
+        # True where labels are NOT IGNORE_INDEX
+        is_not_ignore_token = labels != IGNORE_INDEX
+        cumsum_non_ignore = torch.cumsum(is_not_ignore_token.int(), dim=1)
+        prompt_mask = cumsum_non_ignore == 0
+        return prompt_mask
 
     def _process_vision_features(self, pixel_values, language_embeddings=None, use_film=False):
         """Process vision features with optional FiLM conditioning"""
@@ -516,6 +523,7 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
         noisy_action_projector=None,
         diffusion_timestep_embeddings=None,
         use_film: bool = False,
+        prompt_lengths: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, PrismaticCausalLMOutputWithPast]:
         """Run a forward pass through the VLM, returning a PrismaticCausalLMOutputWithPast instance."""
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -533,6 +541,7 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
 
         # === Handle Generation with Cache (`input_ids.shape[1] == 1`) =>> requires `past_keys_values` ===
         if input_ids.shape[1] == 1:
+            assert False, "Not implemented"
             assert input_ids.shape[0] == 1, "Generation is only currently supported for batch size of 1!"
             assert past_key_values is not None, "You must provide `past_key_values` during cached generation!"
             assert labels is None, "Unexpected key `labels` provided during cached generation!"
@@ -552,6 +561,7 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
 
         # === Handle Unimodal Forward ===
         elif pixel_values is None:
+            assert False, "Not implemented"
             assert (input_ids is not None) and (inputs_embeds is None), "Missing `input_ids` in language-only forward!"
             assert past_key_values is None, "Unexpected key `past_key_values` provided during language-only forward!"
 
@@ -575,13 +585,27 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             # Get input embeddings (from language model embeddings)
             input_embeddings = self.get_input_embeddings()(input_ids)  # (B, seq_len, D)
 
-            # Extract action masks
-            all_actions_mask = self._process_action_masks(labels)
-
-            # Extract the language portion of the input embeddings (i.e. remove the action tokens portion)
-            language_embeddings = input_embeddings[~all_actions_mask].reshape(
-                input_embeddings.shape[0], -1, input_embeddings.shape[2]
-            )  # (B, lang_seq_len, llm_dim)
+            # Extract prompt masks
+            if prompt_lengths is None:
+                assert labels is not None, "Missing `labels` for multimodal forward!"
+                prompt_masks = self._get_prompt_masks(labels)
+            else:
+                prompt_masks = torch.zeros(input_ids.shape[0], input_ids.shape[1], dtype=torch.bool, device=input_ids.device)
+                for i, length in enumerate(prompt_lengths):
+                    prompt_masks[i, :length] = True
+            
+            # Extract the prompt portion of the input embeddings
+            pad_token_tensor = torch.tensor(
+                [self.pad_token_id], dtype=input_ids.dtype, device=input_ids.device
+            )
+            pad_embedding_vec = self.get_input_embeddings()(pad_token_tensor)
+            pad_fill_tensor = pad_embedding_vec.repeat(input_embeddings.shape[0], input_embeddings.shape[1], 1)
+            language_embeddings = torch.where(
+                prompt_masks.unsqueeze(-1), input_embeddings, pad_fill_tensor
+            )
+            # remove extra padding from language embeddings
+            max_prompt_length = prompt_masks.sum(dim=1).max().item()
+            language_embeddings = language_embeddings[:, :max_prompt_length, :]
 
             # Get visual features
             projected_patch_embeddings = self._process_vision_features(pixel_values, language_embeddings, use_film)
@@ -618,6 +642,7 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             else:
                 # Replace the embeddings of the action tokens with zeros
                 # (Later on, the positional embeddings will be added to them)
+                all_actions_mask = self._process_action_masks(labels)
                 all_actions_mask = all_actions_mask.unsqueeze(-1)  # (B, seq_len, 1)
                 input_embeddings = input_embeddings * ~all_actions_mask
 
