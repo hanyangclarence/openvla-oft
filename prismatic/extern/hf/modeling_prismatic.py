@@ -590,6 +590,36 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             projected_patch_embeddings = self._process_proprio_features(
                 projected_patch_embeddings, proprio, proprio_projector
             )
+            
+            # [Diffusion] Add diffusion timestep embedding if provided
+            if diffusion_timestep_embeddings is not None:
+                # For simplicity, just append diffusion timestep embedding to the end of projected vision patch tokens
+                projected_patch_embeddings = torch.cat(
+                    (projected_patch_embeddings, diffusion_timestep_embeddings), dim=1
+                )
+
+            # Process action embeddings
+            if noisy_actions is not None:
+                # Get mask corresponding to all action tokens
+                all_actions_mask = self._process_action_masks(labels)
+
+                # Reshape noisy actions into individual action tokens
+                # noisy_actions: (B, chunk_len, action_dim) -> (B, chunk_len * action_dim, 1)
+                B = noisy_actions.shape[0]
+                noisy_actions = noisy_actions.reshape(B, -1).unsqueeze(-1)
+
+                # Project noisy action tokens into language model embedding space
+                noisy_action_features = noisy_action_projector(noisy_actions)  # (B, chunk_len * action_dim, llm_dim)
+
+                # Replace embeddings of the action tokens with noisy action embeddings
+                input_embeddings = self._replace_input_embeddings(
+                    input_embeddings, all_actions_mask, noisy_action_features
+                )
+            else:
+                # Replace the embeddings of the action tokens with zeros
+                # (Later on, the positional embeddings will be added to them)
+                all_actions_mask = all_actions_mask.unsqueeze(-1)  # (B, seq_len, 1)
+                input_embeddings = input_embeddings * ~all_actions_mask
 
             # Build multimodal embeddings & attention mask
             multimodal_embeddings, multimodal_attention_mask = self._build_multimodal_attention(
