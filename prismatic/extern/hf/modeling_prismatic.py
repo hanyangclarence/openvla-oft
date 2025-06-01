@@ -519,7 +519,7 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
         noisy_action_projector=None,
         diffusion_timestep_embeddings=None,
         use_film: bool = False,
-        prompt_length: Optional[torch.LongTensor] = None,
+        prompt_lengths: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, PrismaticCausalLMOutputWithPast]:
         """Run a forward pass through the VLM, returning a PrismaticCausalLMOutputWithPast instance."""
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -582,12 +582,12 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             input_embeddings = self.get_input_embeddings()(input_ids)  # (B, seq_len, D)
 
             # Extract prompt masks
-            if prompt_length is None:
+            if prompt_lengths is None:
                 assert labels is not None, "Missing `labels` for multimodal forward!"
                 prompt_masks = self._get_prompt_masks(labels)
             else:
                 prompt_masks = torch.zeros(input_ids.shape[0], input_ids.shape[1], dtype=torch.bool, device=input_ids.device)
-                for i, length in enumerate(prompt_length):
+                for i, length in enumerate(prompt_lengths):
                     prompt_masks[i, :length] = True
             
             # Extract the prompt portion of the input embeddings
@@ -704,7 +704,7 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
                 "noisy_action_projector": kwargs.get("noisy_action_projector"),
                 "diffusion_timestep_embeddings": kwargs.get("diffusion_timestep_embeddings"),
                 "use_film": kwargs.get("use_film", False),
-                "prompt_length": kwargs.get("prompt_length"),
+                "prompt_lengths": kwargs.get("prompt_lengths"),
             }
         )
 
