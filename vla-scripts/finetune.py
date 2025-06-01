@@ -564,7 +564,7 @@ def finetune(cfg: FinetuneConfig) -> None:
 
     # Load processor and VLA
     processor = AutoProcessor.from_pretrained(cfg.vla_path, trust_remote_code=True)
-    vla = AutoModelForVision2Seq.from_pretrained(
+    vla = OpenVLAForActionPrediction.from_pretrained(
         cfg.vla_path,
         torch_dtype=torch.bfloat16,
         low_cpu_mem_usage=True,
