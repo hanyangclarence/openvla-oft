@@ -34,12 +34,6 @@ class RLBenchO1Dataset(tfds.core.GeneratorBasedBuilder):
                             encoding_format='png',
                             doc='Main camera RGB observation.',
                         ),
-                        'depth_image': tfds.features.Image(
-                            shape=(512, 512, 3),
-                            dtype=np.uint8,
-                            encoding_format='png',
-                            doc='Wrist camera RGB observation.',
-                        ),
                         'wrist_image': tfds.features.Image(
                             shape=(512, 512, 3),
                             dtype=np.uint8,
@@ -138,7 +132,6 @@ class RLBenchO1Dataset(tfds.core.GeneratorBasedBuilder):
                     # Get image paths rather than loading them
                     if 'expert' in subdir:
                         rgb_path = os.path.join(subdir_path, 'front_rgb', 'begin.png')
-                        depth_path = os.path.join(subdir_path, 'front_depth', 'begin.png')
                         wrist_rgb_path = os.path.join(subdir_path, 'wrist_rgb', 'begin.png')
                         info_path = os.path.join(subdir_path, 'info.json')
                         
@@ -156,7 +149,6 @@ class RLBenchO1Dataset(tfds.core.GeneratorBasedBuilder):
                         sample = {
                             'observation': {
                                 'image': rgb_path,  # Just store the path
-                                'depth_image': depth_path,  # Just store the path
                                 'wrist_image': wrist_rgb_path,
                                 'state': _process_pose_to_state(info['prev_pose'])
                             },
@@ -169,7 +161,6 @@ class RLBenchO1Dataset(tfds.core.GeneratorBasedBuilder):
                     elif 'perturb' in subdir:
                         
                         rgb_path = os.path.join(subdir_path, 'front_rgb', 'end.png')
-                        depth_path = os.path.join(subdir_path, 'front_depth', 'end.png')
                         wrist_rgb_path = os.path.join(subdir_path, 'wrist_rgb', 'end.png')
                         info_path = os.path.join(subdir_path, 'info.json')
                         
@@ -182,7 +173,6 @@ class RLBenchO1Dataset(tfds.core.GeneratorBasedBuilder):
                         sample = {
                             'observation': {
                                 'image': rgb_path,  # Just store the path
-                                'depth_image': depth_path,  # Just store the path
                                 'wrist_image': wrist_rgb_path,
                                 'state': _process_pose_to_state(info['current_pose'])
                             },
