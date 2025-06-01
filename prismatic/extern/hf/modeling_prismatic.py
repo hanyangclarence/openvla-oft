@@ -581,27 +581,13 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             # Get input embeddings (from language model embeddings)
             input_embeddings = self.get_input_embeddings()(input_ids)  # (B, seq_len, D)
 
-            # Extract prompt masks
-            if prompt_lengths is None:
-                assert labels is not None, "Missing `labels` for multimodal forward!"
-                prompt_masks = self._get_prompt_masks(labels)
-            else:
-                prompt_masks = torch.zeros(input_ids.shape[0], input_ids.shape[1], dtype=torch.bool, device=input_ids.device)
-                for i, length in enumerate(prompt_lengths):
-                    prompt_masks[i, :length] = True
-            
-            # Extract the prompt portion of the input embeddings
-            pad_token_tensor = torch.tensor(
-                [self.pad_token_id], dtype=input_ids.dtype, device=input_ids.device
-            )
-            pad_embedding_vec = self.get_input_embeddings()(pad_token_tensor)
-            pad_fill_tensor = pad_embedding_vec.repeat(input_embeddings.shape[0], input_embeddings.shape[1], 1)
-            language_embeddings = torch.where(
-                prompt_masks.unsqueeze(-1), input_embeddings, pad_fill_tensor
-            )
-            # remove extra padding from language embeddings
-            max_prompt_length = prompt_masks.sum(dim=1).max().item()
-            language_embeddings = language_embeddings[:, :max_prompt_length, :]
+            # Extract action masks
+            all_actions_mask = self._process_action_masks(labels)
+
+            # Extract the language portion of the input embeddings (i.e. remove the action tokens portion)
+            language_embeddings = input_embeddings[~all_actions_mask].reshape(
+                input_embeddings.shape[0], -1, input_embeddings.shape[2]
+            )  # (B, lang_seq_len, llm_dim)
 
             # Get visual features
             projected_patch_embeddings = self._process_vision_features(pixel_values, language_embeddings, use_film)
