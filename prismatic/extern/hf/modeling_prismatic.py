@@ -21,10 +21,6 @@ from timm.models.vision_transformer import LayerScale
 from transformers import AutoModelForCausalLM, PretrainedConfig, PreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 
-from prismatic.training.train_utils import (
-    get_current_action_mask,
-    get_next_actions_mask,
-)
 from prismatic.vla.constants import (
     ACTION_DIM,
     ACTION_PROPRIO_NORMALIZATION_TYPE,
@@ -615,36 +611,36 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
                 projected_patch_embeddings, proprio, proprio_projector
             )
             
-            # [Diffusion] Add diffusion timestep embedding if provided
-            if diffusion_timestep_embeddings is not None:
-                # For simplicity, just append diffusion timestep embedding to the end of projected vision patch tokens
-                projected_patch_embeddings = torch.cat(
-                    (projected_patch_embeddings, diffusion_timestep_embeddings), dim=1
-                )
+            # # [Diffusion] Add diffusion timestep embedding if provided
+            # if diffusion_timestep_embeddings is not None:
+            #     # For simplicity, just append diffusion timestep embedding to the end of projected vision patch tokens
+            #     projected_patch_embeddings = torch.cat(
+            #         (projected_patch_embeddings, diffusion_timestep_embeddings), dim=1
+            #     )
 
-            # Process action embeddings
-            if noisy_actions is not None:
-                # Get mask corresponding to all action tokens
-                all_actions_mask = self._process_action_masks(labels)
+            # # Process action embeddings
+            # if noisy_actions is not None:
+            #     # Get mask corresponding to all action tokens
+            #     all_actions_mask = self._process_action_masks(labels)
 
-                # Reshape noisy actions into individual action tokens
-                # noisy_actions: (B, chunk_len, action_dim) -> (B, chunk_len * action_dim, 1)
-                B = noisy_actions.shape[0]
-                noisy_actions = noisy_actions.reshape(B, -1).unsqueeze(-1)
+            #     # Reshape noisy actions into individual action tokens
+            #     # noisy_actions: (B, chunk_len, action_dim) -> (B, chunk_len * action_dim, 1)
+            #     B = noisy_actions.shape[0]
+            #     noisy_actions = noisy_actions.reshape(B, -1).unsqueeze(-1)
 
-                # Project noisy action tokens into language model embedding space
-                noisy_action_features = noisy_action_projector(noisy_actions)  # (B, chunk_len * action_dim, llm_dim)
+            #     # Project noisy action tokens into language model embedding space
+            #     noisy_action_features = noisy_action_projector(noisy_actions)  # (B, chunk_len * action_dim, llm_dim)
 
-                # Replace embeddings of the action tokens with noisy action embeddings
-                input_embeddings = self._replace_input_embeddings(
-                    input_embeddings, all_actions_mask, noisy_action_features
-                )
-            else:
-                # Replace the embeddings of the action tokens with zeros
-                # (Later on, the positional embeddings will be added to them)
-                all_actions_mask = self._process_action_masks(labels)
-                all_actions_mask = all_actions_mask.unsqueeze(-1)  # (B, seq_len, 1)
-                input_embeddings = input_embeddings * ~all_actions_mask
+            #     # Replace embeddings of the action tokens with noisy action embeddings
+            #     input_embeddings = self._replace_input_embeddings(
+            #         input_embeddings, all_actions_mask, noisy_action_features
+            #     )
+            # else:
+            #     # Replace the embeddings of the action tokens with zeros
+            #     # (Later on, the positional embeddings will be added to them)
+            #     all_actions_mask = self._process_action_masks(labels)
+            #     all_actions_mask = all_actions_mask.unsqueeze(-1)  # (B, seq_len, 1)
+            #     input_embeddings = input_embeddings * ~all_actions_mask
 
             # Build multimodal embeddings & attention mask
             multimodal_embeddings, multimodal_attention_mask = self._build_multimodal_attention(
@@ -733,6 +729,13 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
                 "pixel_values": pixel_values,
                 "past_key_values": past_key_values,
                 "use_cache": kwargs.get("use_cache"),
+                "proprio": kwargs.get("proprio"),
+                "proprio_projector": kwargs.get("proprio_projector"),
+                "noisy_actions": kwargs.get("noisy_actions"),
+                "noisy_action_projector": kwargs.get("noisy_action_projector"),
+                "diffusion_timestep_embeddings": kwargs.get("diffusion_timestep_embeddings"),
+                "use_film": kwargs.get("use_film", False),
+                "prompt_lengths": kwargs.get("prompt_lengths"),
             }
         )
 
