@@ -519,6 +519,7 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
         noisy_action_projector=None,
         diffusion_timestep_embeddings=None,
         use_film: bool = False,
+        prompt_length: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, PrismaticCausalLMOutputWithPast]:
         """Run a forward pass through the VLM, returning a PrismaticCausalLMOutputWithPast instance."""
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -581,7 +582,13 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             input_embeddings = self.get_input_embeddings()(input_ids)  # (B, seq_len, D)
 
             # Extract prompt masks
-            prompt_masks = self._get_prompt_masks(labels)
+            if prompt_length is None:
+                assert labels is not None, "Missing `labels` for multimodal forward!"
+                prompt_masks = self._get_prompt_masks(labels)
+            else:
+                prompt_masks = torch.zeros(input_ids.shape[0], input_ids.shape[1], dtype=torch.bool, device=input_ids.device)
+                for i, length in enumerate(prompt_length):
+                    prompt_masks[i, :length] = True
             
             # Extract the prompt portion of the input embeddings
             pad_token_tensor = torch.tensor(
@@ -697,6 +704,7 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
                 "noisy_action_projector": kwargs.get("noisy_action_projector"),
                 "diffusion_timestep_embeddings": kwargs.get("diffusion_timestep_embeddings"),
                 "use_film": kwargs.get("use_film", False),
+                "prompt_length": kwargs.get("prompt_length"),
             }
         )
 
@@ -960,6 +968,7 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         
         pixel_values = kwargs["pixel_values"]
         attention_mask = kwargs["attention_mask"]
+        prompt_lengths = attention_mask.sum(dim=1)
         generated_ids = self.generate(
             input_ids=input_ids,
             pixel_values=kwargs.get("pixel_values"),
@@ -970,6 +979,7 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
             max_new_tokens=200,
             eos_token_id=STOP_INDEX,
             pad_token_id=self.pad_token_id,
+            prompt_lengths=prompt_lengths,
         )
         
         
