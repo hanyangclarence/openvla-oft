@@ -691,6 +691,12 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
                 "pixel_values": pixel_values,
                 "past_key_values": past_key_values,
                 "use_cache": kwargs.get("use_cache"),
+                "proprio": kwargs.get("proprio"),
+                "proprio_projector": kwargs.get("proprio_projector"),
+                "noisy_actions": kwargs.get("noisy_actions"),
+                "noisy_action_projector": kwargs.get("noisy_action_projector"),
+                "diffusion_timestep_embeddings": kwargs.get("diffusion_timestep_embeddings"),
+                "use_film": kwargs.get("use_film", False),
             }
         )
 

@@ -714,7 +714,7 @@ def prepare_images_for_vla(images: List[np.ndarray], cfg: Any) -> List[Image.Ima
 
 def get_vla_action(
     cfg: Any,
-    vla: torch.nn.Module,
+    vla: OpenVLAForActionPrediction,
     processor: Any,
     obs: Dict[str, Any],
     task_label: str,
