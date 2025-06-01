@@ -430,9 +430,10 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
 
     def _process_action_masks(self, labels):
         """Helper to get action masks from labels"""
-        current_action_mask = get_current_action_mask(labels)
-        next_actions_mask = get_next_actions_mask(labels)
-        all_actions_mask = current_action_mask | next_actions_mask  # (B, seq_len)
+        # current_action_mask = get_current_action_mask(labels)
+        # next_actions_mask = get_next_actions_mask(labels)
+        # all_actions_mask = current_action_mask | next_actions_mask  # (B, seq_len)
+        all_actions_mask = labels > ACTION_TOKEN_BEGIN_IDX
         return all_actions_mask
 
     def _process_vision_features(self, pixel_values, language_embeddings=None, use_film=False):
