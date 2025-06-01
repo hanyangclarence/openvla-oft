@@ -21,10 +21,6 @@ from timm.models.vision_transformer import LayerScale
 from transformers import AutoModelForCausalLM, PretrainedConfig, PreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 
-from prismatic.training.train_utils import (
-    get_current_action_mask,
-    get_next_actions_mask,
-)
 from prismatic.vla.constants import (
     ACTION_DIM,
     ACTION_PROPRIO_NORMALIZATION_TYPE,
@@ -955,6 +951,24 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         Returns:
             Tuple of (unnormalized_actions, action_hidden_states)
         """
+        
+        pixel_values = kwargs["pixel_values"]
+        attention_mask = kwargs["attention_mask"]
+        generated_ids = self.generate(
+            input_ids=input_ids,
+            pixel_values=kwargs.get("pixel_values"),
+            attention_mask=kwargs.get("attention_mask"),
+            proprio=torch.tensor(proprio, dtype=pixel_values.dtype, device=pixel_values.device),
+            proprio_projector=proprio_projector,
+            use_film=use_film,
+            max_new_tokens=200,
+            eos_token_id=STOP_INDEX,
+            pad_token_id=self.pad_token_id,
+        )
+        
+        
+        
+        
         # If the special empty token ('') does not already appear after the colon (':') token in the prompt
         # (after "OUT:" or "ASSISTANT:"), insert it to match the inputs seen at training time
         if not torch.all(input_ids[:, -1] == 29871):
