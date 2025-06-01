@@ -182,6 +182,9 @@ cfg = GenerateConfig(
     unnorm_key = "rlbencho1",
 )
 
+import pdb
+pdb.set_trace()
+
 # Load OpenVLA-OFT policy and inputs processor
 vla = get_vla(cfg)
 processor = get_processor(cfg)
