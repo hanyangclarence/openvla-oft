@@ -208,7 +208,7 @@ proprio_projector = get_proprio_projector(cfg, llm_dim=vla.llm_dim, proprio_dim=
 # Create Action Tokenizer
 action_tokenizer = ActionTokenizer(processor.tokenizer)
 
-dataset_metadata = json.load(open(dataset_metadata_path, 'r'))['rlbencho1']
+dataset_metadata = vla.norm_stats['rlbencho1']
 
 correct_action_token_count = 0
 correct_transition_token_count = 0
