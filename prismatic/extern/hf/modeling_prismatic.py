@@ -21,6 +21,10 @@ from timm.models.vision_transformer import LayerScale
 from transformers import AutoModelForCausalLM, PretrainedConfig, PreTrainedModel
 from transformers.modeling_outputs import ModelOutput
 
+from prismatic.training.train_utils import (
+    get_current_action_mask,
+    get_next_actions_mask,
+)
 from prismatic.vla.constants import (
     ACTION_DIM,
     ACTION_PROPRIO_NORMALIZATION_TYPE,
@@ -426,18 +430,10 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
 
     def _process_action_masks(self, labels):
         """Helper to get action masks from labels"""
-        # current_action_mask = get_current_action_mask(labels)
-        # next_actions_mask = get_next_actions_mask(labels)
-        # all_actions_mask = current_action_mask | next_actions_mask  # (B, seq_len)
-        all_actions_mask = labels > ACTION_TOKEN_BEGIN_IDX
+        current_action_mask = get_current_action_mask(labels)
+        next_actions_mask = get_next_actions_mask(labels)
+        all_actions_mask = current_action_mask | next_actions_mask  # (B, seq_len)
         return all_actions_mask
-    
-    def _get_prompt_masks(self, labels):
-        # True where labels are NOT IGNORE_INDEX
-        is_not_ignore_token = labels != IGNORE_INDEX
-        cumsum_non_ignore = torch.cumsum(is_not_ignore_token.int(), dim=1)
-        prompt_mask = cumsum_non_ignore == 0
-        return prompt_mask
 
     def _process_vision_features(self, pixel_values, language_embeddings=None, use_film=False):
         """Process vision features with optional FiLM conditioning"""
@@ -519,7 +515,6 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
         noisy_action_projector=None,
         diffusion_timestep_embeddings=None,
         use_film: bool = False,
-        prompt_lengths: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, PrismaticCausalLMOutputWithPast]:
         """Run a forward pass through the VLM, returning a PrismaticCausalLMOutputWithPast instance."""
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -537,7 +532,6 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
 
         # === Handle Generation with Cache (`input_ids.shape[1] == 1`) =>> requires `past_keys_values` ===
         if input_ids.shape[1] == 1:
-            assert False, "Not implemented"
             assert input_ids.shape[0] == 1, "Generation is only currently supported for batch size of 1!"
             assert past_key_values is not None, "You must provide `past_key_values` during cached generation!"
             assert labels is None, "Unexpected key `labels` provided during cached generation!"
@@ -557,7 +551,6 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
 
         # === Handle Unimodal Forward ===
         elif pixel_values is None:
-            assert False, "Not implemented"
             assert (input_ids is not None) and (inputs_embeds is None), "Missing `input_ids` in language-only forward!"
             assert past_key_values is None, "Unexpected key `past_key_values` provided during language-only forward!"
 
@@ -581,27 +574,13 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             # Get input embeddings (from language model embeddings)
             input_embeddings = self.get_input_embeddings()(input_ids)  # (B, seq_len, D)
 
-            # Extract prompt masks
-            if prompt_lengths is None:
-                assert labels is not None, "Missing `labels` for multimodal forward!"
-                prompt_masks = self._get_prompt_masks(labels)
-            else:
-                prompt_masks = torch.zeros(input_ids.shape[0], input_ids.shape[1], dtype=torch.bool, device=input_ids.device)
-                for i, length in enumerate(prompt_lengths):
-                    prompt_masks[i, :length] = True
-            
-            # Extract the prompt portion of the input embeddings
-            pad_token_tensor = torch.tensor(
-                [self.pad_token_id], dtype=input_ids.dtype, device=input_ids.device
-            )
-            pad_embedding_vec = self.get_input_embeddings()(pad_token_tensor)
-            pad_fill_tensor = pad_embedding_vec.repeat(input_embeddings.shape[0], input_embeddings.shape[1], 1)
-            language_embeddings = torch.where(
-                prompt_masks.unsqueeze(-1), input_embeddings, pad_fill_tensor
-            )
-            # remove extra padding from language embeddings
-            max_prompt_length = prompt_masks.sum(dim=1).max().item()
-            language_embeddings = language_embeddings[:, :max_prompt_length, :]
+            # Extract action masks
+            all_actions_mask = self._process_action_masks(labels)
+
+            # Extract the language portion of the input embeddings (i.e. remove the action tokens portion)
+            language_embeddings = input_embeddings[~all_actions_mask].reshape(
+                input_embeddings.shape[0], -1, input_embeddings.shape[2]
+            )  # (B, lang_seq_len, llm_dim)
 
             # Get visual features
             projected_patch_embeddings = self._process_vision_features(pixel_values, language_embeddings, use_film)
@@ -638,8 +617,8 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
             else:
                 # Replace the embeddings of the action tokens with zeros
                 # (Later on, the positional embeddings will be added to them)
-                prompt_masks = prompt_masks.unsqueeze(-1)  # (B, seq_len, 1)
-                input_embeddings = input_embeddings * ~prompt_masks
+                all_actions_mask = all_actions_mask.unsqueeze(-1)  # (B, seq_len, 1)
+                input_embeddings = input_embeddings * ~all_actions_mask
 
             # Build multimodal embeddings & attention mask
             multimodal_embeddings, multimodal_attention_mask = self._build_multimodal_attention(
@@ -728,13 +707,6 @@ class PrismaticForConditionalGeneration(PrismaticPreTrainedModel):
                 "pixel_values": pixel_values,
                 "past_key_values": past_key_values,
                 "use_cache": kwargs.get("use_cache"),
-                "proprio": kwargs.get("proprio"),
-                "proprio_projector": kwargs.get("proprio_projector"),
-                "noisy_actions": kwargs.get("noisy_actions"),
-                "noisy_action_projector": kwargs.get("noisy_action_projector"),
-                "diffusion_timestep_embeddings": kwargs.get("diffusion_timestep_embeddings"),
-                "use_film": kwargs.get("use_film", False),
-                "prompt_lengths": kwargs.get("prompt_lengths"),
             }
         )
 
@@ -995,115 +967,95 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         Returns:
             Tuple of (unnormalized_actions, action_hidden_states)
         """
-        
+        # If the special empty token ('') does not already appear after the colon (':') token in the prompt
+        # (after "OUT:" or "ASSISTANT:"), insert it to match the inputs seen at training time
+        if not torch.all(input_ids[:, -1] == 29871):
+            input_ids = torch.cat(
+                (input_ids, torch.unsqueeze(torch.Tensor([29871]).long(), dim=0).to(input_ids.device)), dim=1
+            )
+
         pixel_values = kwargs["pixel_values"]
         attention_mask = kwargs["attention_mask"]
-        prompt_lengths = attention_mask.sum(dim=1)
-        generated_ids = self.generate(
-            input_ids=input_ids,
-            pixel_values=kwargs.get("pixel_values"),
-            attention_mask=kwargs.get("attention_mask"),
-            proprio=torch.tensor(proprio, dtype=pixel_values.dtype, device=pixel_values.device),
-            proprio_projector=proprio_projector,
-            use_film=use_film,
-            max_new_tokens=200,
-            eos_token_id=STOP_INDEX,
-            pad_token_id=self.pad_token_id,
-            prompt_lengths=prompt_lengths,
+
+        # Create fake labels tensor (needed for action mask)
+        labels = input_ids.clone()
+        labels[:] = IGNORE_INDEX
+
+        # Get number of tokens in prompt (excluding the start token)
+        NUM_PROMPT_TOKENS = input_ids.shape[-1] - 1  # Subtract action tokens and stop token
+
+        # Prepare inputs by adding necessary tokens
+        input_ids, attention_mask = self._prepare_input_for_action_prediction(input_ids, attention_mask)
+
+        # Update labels tensor for action mask computation later
+        labels = self._prepare_labels_for_action_prediction(labels, input_ids)
+
+        # Get input embeddings and action masks
+        input_embeddings = self.get_input_embeddings()(input_ids)
+        all_actions_mask = self._process_action_masks(labels)
+
+        # Extract language embeddings
+        language_embeddings = input_embeddings[~all_actions_mask].reshape(
+            input_embeddings.shape[0], -1, input_embeddings.shape[2]
         )
-        
-        return generated_ids
-        
-        
-        # # If the special empty token ('') does not already appear after the colon (':') token in the prompt
-        # # (after "OUT:" or "ASSISTANT:"), insert it to match the inputs seen at training time
-        # if not torch.all(input_ids[:, -1] == 29871):
-        #     input_ids = torch.cat(
-        #         (input_ids, torch.unsqueeze(torch.Tensor([29871]).long(), dim=0).to(input_ids.device)), dim=1
-        #     )
 
-        # pixel_values = kwargs["pixel_values"]
-        # attention_mask = kwargs["attention_mask"]
+        # Process vision features
+        projected_patch_embeddings = self._process_vision_features(pixel_values, language_embeddings, use_film)
 
-        # # Create fake labels tensor (needed for action mask)
-        # labels = input_ids.clone()
-        # labels[:] = IGNORE_INDEX
+        # Add proprioceptive features if provided
+        use_proprio = proprio_projector is not None and proprio is not None
+        if use_proprio:
+            proprio = torch.Tensor(proprio).to(projected_patch_embeddings.device, dtype=projected_patch_embeddings.dtype)
+            projected_patch_embeddings = self._process_proprio_features(
+                projected_patch_embeddings, proprio, proprio_projector
+            )
 
-        # # Get number of tokens in prompt (excluding the start token)
-        # NUM_PROMPT_TOKENS = input_ids.shape[-1] - 1  # Subtract action tokens and stop token
+        # Use diffusion if provided, otherwise use regression or discrete prediction
+        use_diffusion = noisy_action_projector is not None and hasattr(action_head, "noise_scheduler")
 
-        # # Prepare inputs by adding necessary tokens
-        # input_ids, attention_mask = self._prepare_input_for_action_prediction(input_ids, attention_mask)
+        # Calculate number of patches (including proprio token and/or diffusion timestep embedding if present)
+        NUM_PATCHES = self.vision_backbone.get_num_patches() * self.vision_backbone.get_num_images_in_input()
+        if use_proprio:
+            NUM_PATCHES += 1
+        if use_diffusion:
+            NUM_PATCHES += 1
 
-        # # Update labels tensor for action mask computation later
-        # labels = self._prepare_labels_for_action_prediction(labels, input_ids)
+        if use_diffusion:
+            # Sample random noise with shape equal to output action, used as the starting state for reverse diffusion
+            noise = torch.randn(
+                size=(1, NUM_ACTIONS_CHUNK, ACTION_DIM), device=input_embeddings.device, dtype=input_embeddings.dtype
+            )
 
-        # # Get input embeddings and action masks
-        # input_embeddings = self.get_input_embeddings()(input_ids)
-        # all_actions_mask = self._process_action_masks(labels)
+            # Run diffusion-based prediction
+            normalized_actions, actions_hidden_states = self._run_diffusion_prediction(
+                input_embeddings,
+                all_actions_mask,
+                noise,
+                action_head,
+                projected_patch_embeddings,
+                labels,
+                attention_mask,
+                NUM_PATCHES,
+                NUM_PROMPT_TOKENS,
+                noisy_action_projector,
+            )
+        else:
+            # Run regression or discrete token-based prediction
+            normalized_actions, actions_hidden_states = self._regression_or_discrete_prediction(
+                input_embeddings,
+                all_actions_mask,
+                projected_patch_embeddings,
+                attention_mask,
+                labels,
+                NUM_PATCHES,
+                NUM_PROMPT_TOKENS,
+                action_head,
+            )
 
-        # # Extract language embeddings
-        # language_embeddings = input_embeddings[~all_actions_mask].reshape(
-        #     input_embeddings.shape[0], -1, input_embeddings.shape[2]
-        # )
+        # Unnormalize predicted actions
+        actions = self._unnormalize_actions(normalized_actions, unnorm_key)
 
-        # # Process vision features
-        # projected_patch_embeddings = self._process_vision_features(pixel_values, language_embeddings, use_film)
-
-        # # Add proprioceptive features if provided
-        # use_proprio = proprio_projector is not None and proprio is not None
-        # if use_proprio:
-        #     proprio = torch.Tensor(proprio).to(projected_patch_embeddings.device, dtype=projected_patch_embeddings.dtype)
-        #     projected_patch_embeddings = self._process_proprio_features(
-        #         projected_patch_embeddings, proprio, proprio_projector
-        #     )
-
-        # # Use diffusion if provided, otherwise use regression or discrete prediction
-        # use_diffusion = noisy_action_projector is not None and hasattr(action_head, "noise_scheduler")
-
-        # # Calculate number of patches (including proprio token and/or diffusion timestep embedding if present)
-        # NUM_PATCHES = self.vision_backbone.get_num_patches() * self.vision_backbone.get_num_images_in_input()
-        # if use_proprio:
-        #     NUM_PATCHES += 1
-        # if use_diffusion:
-        #     NUM_PATCHES += 1
-
-        # if use_diffusion:
-        #     # Sample random noise with shape equal to output action, used as the starting state for reverse diffusion
-        #     noise = torch.randn(
-        #         size=(1, NUM_ACTIONS_CHUNK, ACTION_DIM), device=input_embeddings.device, dtype=input_embeddings.dtype
-        #     )
-
-        #     # Run diffusion-based prediction
-        #     normalized_actions, actions_hidden_states = self._run_diffusion_prediction(
-        #         input_embeddings,
-        #         all_actions_mask,
-        #         noise,
-        #         action_head,
-        #         projected_patch_embeddings,
-        #         labels,
-        #         attention_mask,
-        #         NUM_PATCHES,
-        #         NUM_PROMPT_TOKENS,
-        #         noisy_action_projector,
-        #     )
-        # else:
-        #     # Run regression or discrete token-based prediction
-        #     normalized_actions, actions_hidden_states = self._regression_or_discrete_prediction(
-        #         input_embeddings,
-        #         all_actions_mask,
-        #         projected_patch_embeddings,
-        #         attention_mask,
-        #         labels,
-        #         NUM_PATCHES,
-        #         NUM_PROMPT_TOKENS,
-        #         action_head,
-        #     )
-
-        # # Unnormalize predicted actions
-        # actions = self._unnormalize_actions(normalized_actions, unnorm_key)
-
-        # return actions, actions_hidden_states
+        return actions, actions_hidden_states
 
     @staticmethod
     def _check_unnorm_key(norm_stats: Dict[str, Dict[str, Any]], unnorm_key: Optional[str]) -> str:
