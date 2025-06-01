@@ -965,115 +965,95 @@ class OpenVLAForActionPrediction(PrismaticForConditionalGeneration):
         Returns:
             Tuple of (unnormalized_actions, action_hidden_states)
         """
-        
+        # If the special empty token ('') does not already appear after the colon (':') token in the prompt
+        # (after "OUT:" or "ASSISTANT:"), insert it to match the inputs seen at training time
+        if not torch.all(input_ids[:, -1] == 29871):
+            input_ids = torch.cat(
+                (input_ids, torch.unsqueeze(torch.Tensor([29871]).long(), dim=0).to(input_ids.device)), dim=1
+            )
+
         pixel_values = kwargs["pixel_values"]
         attention_mask = kwargs["attention_mask"]
-        prompt_lengths = attention_mask.sum(dim=1)
-        generated_ids = self.generate(
-            input_ids=input_ids,
-            pixel_values=kwargs.get("pixel_values"),
-            attention_mask=kwargs.get("attention_mask"),
-            proprio=torch.tensor(proprio, dtype=pixel_values.dtype, device=pixel_values.device),
-            proprio_projector=proprio_projector,
-            use_film=use_film,
-            max_new_tokens=200,
-            eos_token_id=STOP_INDEX,
-            pad_token_id=self.pad_token_id,
-            prompt_lengths=prompt_lengths,
+
+        # Create fake labels tensor (needed for action mask)
+        labels = input_ids.clone()
+        labels[:] = IGNORE_INDEX
+
+        # Get number of tokens in prompt (excluding the start token)
+        NUM_PROMPT_TOKENS = input_ids.shape[-1] - 1  # Subtract action tokens and stop token
+
+        # Prepare inputs by adding necessary tokens
+        input_ids, attention_mask = self._prepare_input_for_action_prediction(input_ids, attention_mask)
+
+        # Update labels tensor for action mask computation later
+        labels = self._prepare_labels_for_action_prediction(labels, input_ids)
+
+        # Get input embeddings and action masks
+        input_embeddings = self.get_input_embeddings()(input_ids)
+        all_actions_mask = self._process_action_masks(labels)
+
+        # Extract language embeddings
+        language_embeddings = input_embeddings[~all_actions_mask].reshape(
+            input_embeddings.shape[0], -1, input_embeddings.shape[2]
         )
-        
-        return generated_ids
-        
-        
-        # # If the special empty token ('') does not already appear after the colon (':') token in the prompt
-        # # (after "OUT:" or "ASSISTANT:"), insert it to match the inputs seen at training time
-        # if not torch.all(input_ids[:, -1] == 29871):
-        #     input_ids = torch.cat(
-        #         (input_ids, torch.unsqueeze(torch.Tensor([29871]).long(), dim=0).to(input_ids.device)), dim=1
-        #     )
 
-        # pixel_values = kwargs["pixel_values"]
-        # attention_mask = kwargs["attention_mask"]
+        # Process vision features
+        projected_patch_embeddings = self._process_vision_features(pixel_values, language_embeddings, use_film)
 
-        # # Create fake labels tensor (needed for action mask)
-        # labels = input_ids.clone()
-        # labels[:] = IGNORE_INDEX
+        # Add proprioceptive features if provided
+        use_proprio = proprio_projector is not None and proprio is not None
+        if use_proprio:
+            proprio = torch.Tensor(proprio).to(projected_patch_embeddings.device, dtype=projected_patch_embeddings.dtype)
+            projected_patch_embeddings = self._process_proprio_features(
+                projected_patch_embeddings, proprio, proprio_projector
+            )
 
-        # # Get number of tokens in prompt (excluding the start token)
-        # NUM_PROMPT_TOKENS = input_ids.shape[-1] - 1  # Subtract action tokens and stop token
+        # Use diffusion if provided, otherwise use regression or discrete prediction
+        use_diffusion = noisy_action_projector is not None and hasattr(action_head, "noise_scheduler")
 
-        # # Prepare inputs by adding necessary tokens
-        # input_ids, attention_mask = self._prepare_input_for_action_prediction(input_ids, attention_mask)
+        # Calculate number of patches (including proprio token and/or diffusion timestep embedding if present)
+        NUM_PATCHES = self.vision_backbone.get_num_patches() * self.vision_backbone.get_num_images_in_input()
+        if use_proprio:
+            NUM_PATCHES += 1
+        if use_diffusion:
+            NUM_PATCHES += 1
 
-        # # Update labels tensor for action mask computation later
-        # labels = self._prepare_labels_for_action_prediction(labels, input_ids)
+        if use_diffusion:
+            # Sample random noise with shape equal to output action, used as the starting state for reverse diffusion
+            noise = torch.randn(
+                size=(1, NUM_ACTIONS_CHUNK, ACTION_DIM), device=input_embeddings.device, dtype=input_embeddings.dtype
+            )
 
-        # # Get input embeddings and action masks
-        # input_embeddings = self.get_input_embeddings()(input_ids)
-        # all_actions_mask = self._process_action_masks(labels)
+            # Run diffusion-based prediction
+            normalized_actions, actions_hidden_states = self._run_diffusion_prediction(
+                input_embeddings,
+                all_actions_mask,
+                noise,
+                action_head,
+                projected_patch_embeddings,
+                labels,
+                attention_mask,
+                NUM_PATCHES,
+                NUM_PROMPT_TOKENS,
+                noisy_action_projector,
+            )
+        else:
+            # Run regression or discrete token-based prediction
+            normalized_actions, actions_hidden_states = self._regression_or_discrete_prediction(
+                input_embeddings,
+                all_actions_mask,
+                projected_patch_embeddings,
+                attention_mask,
+                labels,
+                NUM_PATCHES,
+                NUM_PROMPT_TOKENS,
+                action_head,
+            )
 
-        # # Extract language embeddings
-        # language_embeddings = input_embeddings[~all_actions_mask].reshape(
-        #     input_embeddings.shape[0], -1, input_embeddings.shape[2]
-        # )
+        # Unnormalize predicted actions
+        actions = self._unnormalize_actions(normalized_actions, unnorm_key)
 
-        # # Process vision features
-        # projected_patch_embeddings = self._process_vision_features(pixel_values, language_embeddings, use_film)
-
-        # # Add proprioceptive features if provided
-        # use_proprio = proprio_projector is not None and proprio is not None
-        # if use_proprio:
-        #     proprio = torch.Tensor(proprio).to(projected_patch_embeddings.device, dtype=projected_patch_embeddings.dtype)
-        #     projected_patch_embeddings = self._process_proprio_features(
-        #         projected_patch_embeddings, proprio, proprio_projector
-        #     )
-
-        # # Use diffusion if provided, otherwise use regression or discrete prediction
-        # use_diffusion = noisy_action_projector is not None and hasattr(action_head, "noise_scheduler")
-
-        # # Calculate number of patches (including proprio token and/or diffusion timestep embedding if present)
-        # NUM_PATCHES = self.vision_backbone.get_num_patches() * self.vision_backbone.get_num_images_in_input()
-        # if use_proprio:
-        #     NUM_PATCHES += 1
-        # if use_diffusion:
-        #     NUM_PATCHES += 1
-
-        # if use_diffusion:
-        #     # Sample random noise with shape equal to output action, used as the starting state for reverse diffusion
-        #     noise = torch.randn(
-        #         size=(1, NUM_ACTIONS_CHUNK, ACTION_DIM), device=input_embeddings.device, dtype=input_embeddings.dtype
-        #     )
-
-        #     # Run diffusion-based prediction
-        #     normalized_actions, actions_hidden_states = self._run_diffusion_prediction(
-        #         input_embeddings,
-        #         all_actions_mask,
-        #         noise,
-        #         action_head,
-        #         projected_patch_embeddings,
-        #         labels,
-        #         attention_mask,
-        #         NUM_PATCHES,
-        #         NUM_PROMPT_TOKENS,
-        #         noisy_action_projector,
-        #     )
-        # else:
-        #     # Run regression or discrete token-based prediction
-        #     normalized_actions, actions_hidden_states = self._regression_or_discrete_prediction(
-        #         input_embeddings,
-        #         all_actions_mask,
-        #         projected_patch_embeddings,
-        #         attention_mask,
-        #         labels,
-        #         NUM_PATCHES,
-        #         NUM_PROMPT_TOKENS,
-        #         action_head,
-        #     )
-
-        # # Unnormalize predicted actions
-        # actions = self._unnormalize_actions(normalized_actions, unnorm_key)
-
-        # return actions, actions_hidden_states
+        return actions, actions_hidden_states
 
     @staticmethod
     def _check_unnorm_key(norm_stats: Dict[str, Dict[str, Any]], unnorm_key: Optional[str]) -> str:
