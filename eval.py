@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Optional, Union
 from dataclasses import dataclass
 
-from experiments.robot.libero.run_libero_eval import GenerateConfig
 from experiments.robot.openvla_utils import get_action_head, get_processor, get_proprio_projector, get_vla, get_vla_action
 from prismatic.vla.constants import NUM_ACTIONS_CHUNK, PROPRIO_DIM
 
